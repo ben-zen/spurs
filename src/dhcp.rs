@@ -128,7 +128,7 @@ mod tests {
             1, 4, 255, 255, 255, 0, // subnet option
         ][..];
         
-        let discover_header = DhcpHeader::try_ref_from_bytes(discover_message_bytes)?;
+        let (discover_header, options) = DhcpHeader::try_ref_from_prefix(discover_message_bytes).expect("there's a header there for sure");
         
         assert_eq!(discover_header.operation, BootpOperation::BootRequest);
         assert_eq!(discover_header.hw_type.eval().expect("huh?"), HardwareType::Ieee802);
