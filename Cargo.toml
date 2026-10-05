@@ -1,0 +1,10 @@
+[package]
+name = "spurs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+tracing = "0.1.44"
+zerocopy = "0.8.59"
+zerocopy-derive = "0.8.59"
