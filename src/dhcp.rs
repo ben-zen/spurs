@@ -125,10 +125,10 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // file
             // header end, options begin
-            1, 4, 255, 255, 255, 0, // subnet option
+            53, 1, 1, // Discover operation
         ][..];
         
-        let (discover_header, options) = DhcpHeader::try_ref_from_prefix(discover_message_bytes).expect("there's a header there for sure");
+        let (discover_header, _options) = DhcpHeader::try_ref_from_prefix(discover_message_bytes).expect("there's a header there for sure");
         
         assert_eq!(discover_header.operation, BootpOperation::BootRequest);
         assert_eq!(discover_header.hw_type.eval().expect("huh?"), HardwareType::Ieee802);
