@@ -93,13 +93,30 @@ pub enum DhcpOption<'message> {
     RequestedAddress(&'message RequestedAddress),
     Operation(&'message DhcpOperation),
     ParameterRequest(&'message ParameterRequest),
+    Unknown{ number: u8, data: &'message [u8]},
     End,
 }
 
-// use this as the parsing function
 fn take_dhcp_option<'message>(data: &'message [u8]) -> Result<(DhcpOption<'message>, &'message [u8])> {
-    
-    let (option_header, suffix) = DhcpOptionHeader::try_read_from_prefix(data).map_err(|e| anyhow!("couldn't parse the option header: {e:?}"))?;
+    // Short-circuit handling of unknown options. This also sets up our subsequent filter stage.
+    let Ok((option_number, suffix)) = DhcpOptionNumber::try_ref_from_prefix(data) else {
+        let (option_number, rest) = data.split_first().ok_or(anyhow!("expected at least one byte"))?;
+        tracing::info!("unknown option received: {option_number}");
+        let (length, rest) = rest.split_first().ok_or(anyhow!("a length is expected for all options"))?;
+        ensure!(rest.len() <= (*length).into(), "no option should be longer than the remaining data");
+        let (data, suffix) = rest.split_at((*length).into());
+        return Ok((DhcpOption::Unknown { number: (*option_number), data }, suffix))
+    };
+
+    // Pre-filter for the no-data options. These are handled in the next parser up.
+    match option_number {
+        DhcpOptionNumber::Pad => return Ok((DhcpOption::Pad, suffix)),
+        DhcpOptionNumber::End => return Ok((DhcpOption::End, suffix)),
+        _ => {},
+    }
+
+    // Now we can actually parse options with data to store.
+    let (option_header, suffix) = DhcpOptionHeader::try_ref_from_prefix(data).map_err(|e| anyhow!("couldn't parse the option header: {e:?}"))?;
     ensure!(suffix.len() >= option_header.length.into(), "no option length can exceed remaining data");
     let (option, remainder) = match option_header.option {
         DhcpOptionNumber::Subnet => { 
@@ -143,8 +160,12 @@ pub fn parse_options<'message>(data: &'message [u8]) -> Result<Vec<DhcpOption<'m
     let mut cursor = data;
     while !cursor.is_empty() {
         let (option, suffix) = take_dhcp_option(cursor)?;
-        options.push(option);
         cursor = suffix;
+        match option {
+            DhcpOption::Pad => continue,
+            DhcpOption::End => break,
+            _ => options.push(option),
+        }
     }
 
     Ok(options)
@@ -257,6 +278,20 @@ mod tests {
         for (parsed, expected) in params.options.iter().zip(options.iter()) {
             assert_eq!(parsed, expected, "{parsed:?} should be the same as {expected:?}");
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_option_handling() -> Result<()> {
+        let option_bytes = &[251, 3, 1, 2, 3][..];
+        let (option_body, _) = take_dhcp_option(option_bytes).expect("it's well-formed but unknown");
+        let DhcpOption::Unknown { number, data } = option_body else {
+            bail!("expected an unknown option instead of {option_body:?}")
+        };
+
+        assert_eq!(number, 251);
+        assert_eq!(data.len(), 3);
 
         Ok(())
     }
