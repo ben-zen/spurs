@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright Ben Lewis, 2026.
 // SPDX-License-Identifier: Artistic-2.0
 
-use std::num::NonZeroU8;
-use anyhow::{anyhow, ensure, Error, Result};
+use anyhow::{anyhow, ensure, Result};
 use zerocopy::{byteorder::network_endian::{U16, U32}, TryFromBytes, Unalign};
 use zerocopy_derive::*;
 
@@ -40,7 +39,14 @@ struct DhcpOptionHeader {
     length: u8,
 }
 
+// See if this can be replaced with size_of::<IPv4Address>
 const IP_ADDR_LEN: u8 = 4;
+
+#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[repr(C)]
+pub struct IPv4Address {
+    address: [u8; 4]
+}
 
 #[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
@@ -56,34 +62,41 @@ impl SubnetMask {
 
 #[derive(Debug, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
-struct Routers {
+pub struct Routers {
     routers: [[u8; 4]],
 }
 
 #[derive(Debug, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
-struct DnsServers {
-    routers: [[u8; 4]],
+pub struct DnsServers {
+    servers: [[u8; 4]]
 }
 
+#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[repr(C)]
+pub struct RequestedAddress {
+    address: IPv4Address,
+}
 
 #[derive(Debug, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
-struct ParameterRequest {
+pub struct ParameterRequest {
     options: [DhcpOptionNumber],
 }
 
 #[derive(Debug)]
-enum DhcpOption<'message> {
+pub enum DhcpOption<'message> {
+    Pad,
     Subnet(&'message SubnetMask),
     Routers(&'message Routers),
     DnsServers(&'message DnsServers),
+    RequestedAddress(&'message RequestedAddress),
     Operation(&'message DhcpOperation),
     ParameterRequest(&'message ParameterRequest),
+    End,
 }
 
-// return type should be &[u8] as well
-// use this as the parsing function 
+// use this as the parsing function
 fn take_dhcp_option<'message>(data: &'message [u8]) -> Result<(DhcpOption<'message>, &'message [u8])> {
     
     let (option_header, suffix) = DhcpOptionHeader::try_read_from_prefix(data).map_err(|e| anyhow!("couldn't parse the option header: {e:?}"))?;
@@ -104,6 +117,11 @@ fn take_dhcp_option<'message>(data: &'message [u8]) -> Result<(DhcpOption<'messa
             let (dns_servers, remainder) = DnsServers::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length / IP_ADDR_LEN)).map_err(|e| anyhow!("couldn't parse dns servers: {e:?}"))?;
             (DhcpOption::DnsServers(dns_servers), remainder)
         },
+        DhcpOptionNumber::RequestedAddress => {
+            ensure!(option_header.length == IP_ADDR_LEN, "this is a one-address option");
+            let (requested_address, remainder) = RequestedAddress::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse a requested address: {e:?}"))?;
+            (DhcpOption::RequestedAddress(requested_address), remainder)
+        },
         DhcpOptionNumber::DhcpMessageType => {
             ensure!(option_header.length == 1, "message type is a 1-byte option");
             let (message_type, remainder) = DhcpOperation::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse operation: {e:?}"))?;
@@ -119,10 +137,25 @@ fn take_dhcp_option<'message>(data: &'message [u8]) -> Result<(DhcpOption<'messa
     Ok((option, remainder))
 }
 
+pub fn parse_options<'message>(data: &'message [u8]) -> Result<Vec<DhcpOption<'message>>> {
+    let mut options = Vec::new();
+
+    let mut cursor = data;
+    while !cursor.is_empty() {
+        let (option, suffix) = take_dhcp_option(cursor)?;
+        options.push(option);
+        cursor = suffix;
+    }
+
+    Ok(options)
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::assert_matches;
     use anyhow::{bail, Result};
     use tracing::info;
 
@@ -139,6 +172,67 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_routers() -> Result<()> {
+        let too_short_bytes = &[3, 2, 192, 168][..];
+        take_dhcp_option(too_short_bytes).expect_err("should be a fault");
+        let one_route = &[3, 4, 192, 168, 0, 1][..];
+        let (solo_route, _) = take_dhcp_option(one_route).expect("this is well-formed");
+        let DhcpOption::Routers(routers) = solo_route else {
+            bail!("expected a Routers option instead of {solo_route:?}")
+        };
+
+        assert_eq!(routers.routers.len(), 1, "only one route");
+
+        let two_routes = &[3, 8, 192, 168, 0, 1, 192, 168, 0, 254][..];
+        let (twin_routes, _) = take_dhcp_option(two_routes).expect("this is well-formed");
+        let DhcpOption::Routers(routers) = twin_routes else {
+            bail!("expected a Routers option instead of {twin_routes:?}")
+        };
+
+        assert_eq!(routers.routers.len(), 2, "two routes");
+
+        Ok(())
+    }
+
+    #[test]
+    fn dns_servers_parse() -> Result<()> {
+        let one_server = &[6, 4, 192, 168, 0, 1][..];
+        let (one_server_option, _) = take_dhcp_option(one_server).expect("this is well-formed");
+        let DhcpOption::DnsServers(servers) = one_server_option else {
+            bail!("expected a DnsServers option instead of {one_server_option:?}")
+        };
+
+        assert_eq!(servers.servers.len(), 1, "one dns server");
+
+        let two_servers = &[6, 8, 192, 168, 0, 1, 192, 168, 0, 220][..];
+        let (two_servers_option, _) = take_dhcp_option(two_servers).expect("this is well-formed");
+        let DhcpOption::DnsServers(servers) = two_servers_option else {
+            bail!("expected a DnsServers optino instead of {two_servers_option:?}")
+        };
+
+        assert_eq!(servers.servers.len(), 2, "two dns servers");
+
+        Ok(())
+    }
+
+    #[test]
+    fn requested_address() -> Result<()> {
+        let addr_bytes: [u8; 4]  = [192, 168, 0, 13];
+        let last_lease = RequestedAddress{address: IPv4Address{ address: addr_bytes }};
+
+        // I haven't really built the into-bytes side of all this, but I'm figuring it out.
+
+
+        let req_addr_bytes = &[50, 4, 192, 168, 0, 13][..];
+        let (requested_address, _) = take_dhcp_option(req_addr_bytes).expect("this is well-formed");
+        let DhcpOption::RequestedAddress(req_addr) = requested_address else {
+            bail!("expected a RequestedAddress option instead of {requested_address:?}")
+        };
+        assert_eq!(req_addr, &last_lease, "should be the exact damn same");
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_operation() -> Result<()> {
         let option_bytes = &[53, 1, 1][..];
         let (option_body, _) = take_dhcp_option(option_bytes).expect("this is a valid option");
@@ -146,7 +240,7 @@ mod tests {
             bail!("expected an Operation element instead of {option_body:?}")
         };
 
-        assert!(matches!(operation, DhcpOperation::Discover), "1 should parse as Discover");
+        assert_matches!(operation, DhcpOperation::Discover, "1 should parse as Discover");
         Ok(())
     }
 
@@ -160,8 +254,8 @@ mod tests {
 
         assert_eq!(params.options.len(), 5, "five options were requested");
         let options = [DhcpOptionNumber::Routers, DhcpOptionNumber::DnsServers, DhcpOptionNumber::DomainName, DhcpOptionNumber::VendorClass, DhcpOptionNumber::IrcServers];
-        for (parsed, expected) in params.options.iter().zip(options) {
-            assert!(matches!(parsed, expected), "{parsed:?} should be the same as {expected:?}");
+        for (parsed, expected) in params.options.iter().zip(options.iter()) {
+            assert_eq!(parsed, expected, "{parsed:?} should be the same as {expected:?}");
         }
 
         Ok(())

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright Ben Lewis, 2026.
 // SPDX-License-Identifier: Artistic-2.0
 
-use zerocopy::{byteorder::network_endian::{U16, U32}, TryFromBytes, Unalign};
+use zerocopy::{byteorder::network_endian::{U16, U32}, TryFromBytes};
 use zerocopy_derive::*;
 
 
@@ -87,8 +87,9 @@ pub struct DhcpHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::{bail, Error, Result};
-    
+    use anyhow::{Result};
+    use crate::option::parse_options;
+
     #[test]
     fn dhcp_operation_from_byte() -> Result<()> {
         let discover_byte = &[0x01][..];
@@ -126,13 +127,16 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // file
             // header end, options begin
             53, 1, 1, // Discover operation
+            50, 4, 192, 168, 0, 13, // Requested address: 192.168.0.13
         ][..];
         
-        let (discover_header, _options) = DhcpHeader::try_ref_from_prefix(discover_message_bytes).expect("there's a header there for sure");
-        
+        let (discover_header, options) = DhcpHeader::try_ref_from_prefix(discover_message_bytes).expect("there's a header there for sure");
+        let options = parse_options(options).expect("the options are well-formed");
+
         assert_eq!(discover_header.operation, BootpOperation::BootRequest);
         assert_eq!(discover_header.hw_type.eval().expect("huh?"), HardwareType::Ieee802);
         assert_eq!(usize::from(discover_header.hw_addr_len), 6);
+        assert_eq!(options.len(), 2);
         
         Ok(())
     }
