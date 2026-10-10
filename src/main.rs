@@ -9,5 +9,9 @@ use crate::option::SubnetMask;
 fn main() {
     println!("Hello, world!");
     let mask = SubnetMask::new([255, 255, 255, 0]);
-    println!("a subnet mask takes up {} bytes and looks like {:?}", size_of::<SubnetMask>(), mask);
+    println!(
+        "a subnet mask takes up {} bytes and looks like {:?}",
+        size_of::<SubnetMask>(),
+        mask
+    );
 }

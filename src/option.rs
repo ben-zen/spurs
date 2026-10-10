@@ -1,14 +1,18 @@
 // SPDX-FileCopyrightText: Copyright Ben Lewis, 2026.
 // SPDX-License-Identifier: Artistic-2.0
 
-use anyhow::{anyhow, ensure, Result};
-use zerocopy::{byteorder::network_endian::{U16, U32}, TryFromBytes, Unalign};
+use anyhow::{Result, anyhow, ensure};
+use zerocopy::{
+    TryFromBytes, Unalign,
+    byteorder::network_endian::{U16, U32},
+};
 use zerocopy_derive::*;
 
 use crate::dhcp::DhcpOperation;
 
-
-#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[derive(
+    Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned,
+)]
 #[repr(u8)]
 pub enum DhcpOptionNumber {
     Pad = 0,
@@ -20,7 +24,7 @@ pub enum DhcpOptionNumber {
     NtpServers = 42,
     RequestedAddress = 50,
     LeaseTime = 51,
-    ExtendedOptions = 52, // 
+    ExtendedOptions = 52, //
     DhcpMessageType = 53, // DhcpOperation
     ServerIdentifier = 54,
     ParameterRequest = 55,
@@ -34,7 +38,9 @@ pub enum DhcpOptionNumber {
     End = 255,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[derive(
+    Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned,
+)]
 #[repr(C)]
 struct DhcpOptionHeader {
     option: DhcpOptionNumber,
@@ -44,13 +50,17 @@ struct DhcpOptionHeader {
 // See if this can be replaced with size_of::<IPv4Address>
 const IP_ADDR_LEN: u8 = 4;
 
-#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[derive(
+    Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned,
+)]
 #[repr(C)]
 pub struct IPv4Address {
-    address: [u8; 4]
+    address: [u8; 4],
 }
 
-#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[derive(
+    Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned,
+)]
 #[repr(C)]
 pub struct SubnetMask {
     mask: [u8; 4],
@@ -71,16 +81,18 @@ pub struct Routers {
 #[derive(Debug, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
 pub struct DnsServers {
-    servers: [IPv4Address]
+    servers: [IPv4Address],
 }
 
 #[derive(Debug, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
 pub struct NtpServers {
-    servers: [IPv4Address]
+    servers: [IPv4Address],
 }
 
-#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[derive(
+    Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned,
+)]
 #[repr(C)]
 pub struct RequestedAddress {
     address: IPv4Address,
@@ -92,13 +104,17 @@ pub struct ParameterRequest {
     options: [DhcpOptionNumber],
 }
 
-#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[derive(
+    Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned,
+)]
 #[repr(C)]
 pub struct RenewalTime {
     seconds: U32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[derive(
+    Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned,
+)]
 #[repr(C)]
 pub struct RebindTime {
     seconds: U32,
@@ -107,7 +123,7 @@ pub struct RebindTime {
 #[derive(Debug, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
 pub struct IrcServers {
-    servers: [IPv4Address]
+    servers: [IPv4Address],
 }
 
 #[derive(Debug)]
@@ -123,80 +139,151 @@ pub enum DhcpOption<'message> {
     RenewalTime(&'message RenewalTime),
     RebindTime(&'message RebindTime),
     IrcServers(&'message IrcServers),
-    Unknown{ number: u8, data: &'message [u8]},
+    Unknown { number: u8, data: &'message [u8] },
     End,
 }
 
-fn take_dhcp_option<'message>(data: &'message [u8]) -> Result<(DhcpOption<'message>, &'message [u8])> {
+fn take_dhcp_option<'message>(
+    data: &'message [u8],
+) -> Result<(DhcpOption<'message>, &'message [u8])> {
     // Short-circuit handling of unknown options. This also sets up our subsequent filter stage.
     let Ok((option_number, suffix)) = DhcpOptionNumber::try_ref_from_prefix(data) else {
-        let (option_number, rest) = data.split_first().ok_or(anyhow!("expected at least one byte"))?;
+        let (option_number, rest) = data
+            .split_first()
+            .ok_or(anyhow!("expected at least one byte"))?;
         tracing::info!("unknown option received: {option_number}");
-        let (length, rest) = rest.split_first().ok_or(anyhow!("a length is expected for all options"))?;
-        ensure!(rest.len() <= (*length).into(), "no option should be longer than the remaining data");
+        let (length, rest) = rest
+            .split_first()
+            .ok_or(anyhow!("a length is expected for all options"))?;
+        ensure!(
+            rest.len() <= (*length).into(),
+            "no option should be longer than the remaining data"
+        );
         let (data, suffix) = rest.split_at((*length).into());
-        return Ok((DhcpOption::Unknown { number: (*option_number), data }, suffix))
+        return Ok((
+            DhcpOption::Unknown {
+                number: (*option_number),
+                data,
+            },
+            suffix,
+        ));
     };
 
     // Pre-filter for the no-data options, so we're not grabbing the wrong portion of this buffer.
     match option_number {
         DhcpOptionNumber::Pad => return Ok((DhcpOption::Pad, suffix)),
         DhcpOptionNumber::End => return Ok((DhcpOption::End, suffix)),
-        _ => {},
+        _ => {}
     }
 
     // Now we can actually parse options with data to store.
-    let (option_header, suffix) = DhcpOptionHeader::try_ref_from_prefix(data).map_err(|e| anyhow!("couldn't parse the option header: {e:?}"))?;
-    ensure!(suffix.len() >= option_header.length.into(), "no option length can exceed remaining data");
+    let (option_header, suffix) = DhcpOptionHeader::try_ref_from_prefix(data)
+        .map_err(|e| anyhow!("couldn't parse the option header: {e:?}"))?;
+    ensure!(
+        suffix.len() >= option_header.length.into(),
+        "no option length can exceed remaining data"
+    );
     let (option, remainder) = match option_header.option {
-        DhcpOptionNumber::Subnet => { 
-            ensure!(option_header.length == IP_ADDR_LEN, "subnet mask should be an addr length");
-            let (subnet_mask, remainder) = SubnetMask::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse subnet mask: {e:?}"))?;
+        DhcpOptionNumber::Subnet => {
+            ensure!(
+                option_header.length == IP_ADDR_LEN,
+                "subnet mask should be an addr length"
+            );
+            let (subnet_mask, remainder) = SubnetMask::try_ref_from_prefix(suffix)
+                .map_err(|e| anyhow!("couldn't parse subnet mask: {e:?}"))?;
             (DhcpOption::Subnet(subnet_mask), remainder)
-        },
+        }
         DhcpOptionNumber::Routers => {
-            ensure!(((option_header.length % IP_ADDR_LEN) == 0) && option_header.length > 0, "routers should be a multiple of an addr length");
-            let (routers, remainder) = Routers::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length / IP_ADDR_LEN)).map_err(|e| anyhow!("couldn't parse routers: {e:?}"))?;
+            ensure!(
+                ((option_header.length % IP_ADDR_LEN) == 0) && option_header.length > 0,
+                "routers should be a multiple of an addr length"
+            );
+            let (routers, remainder) = Routers::try_ref_from_prefix_with_elems(
+                suffix,
+                usize::from(option_header.length / IP_ADDR_LEN),
+            )
+            .map_err(|e| anyhow!("couldn't parse routers: {e:?}"))?;
             (DhcpOption::Routers(routers), remainder)
-        },
+        }
         DhcpOptionNumber::DnsServers => {
-            ensure!(((option_header.length % IP_ADDR_LEN) == 0) && option_header.length > 0, "dns servers should be a multiple of an addr length");
-            let (dns_servers, remainder) = DnsServers::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length / IP_ADDR_LEN)).map_err(|e| anyhow!("couldn't parse dns servers: {e:?}"))?;
+            ensure!(
+                ((option_header.length % IP_ADDR_LEN) == 0) && option_header.length > 0,
+                "dns servers should be a multiple of an addr length"
+            );
+            let (dns_servers, remainder) = DnsServers::try_ref_from_prefix_with_elems(
+                suffix,
+                usize::from(option_header.length / IP_ADDR_LEN),
+            )
+            .map_err(|e| anyhow!("couldn't parse dns servers: {e:?}"))?;
             (DhcpOption::DnsServers(dns_servers), remainder)
-        },
+        }
         DhcpOptionNumber::NtpServers => {
-            ensure!(((option_header.length % IP_ADDR_LEN) == 0) && option_header.length > 0, "ntp servers should be a multiple of an addr length");
-            let (ntp_servers, remainder) = NtpServers::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length / IP_ADDR_LEN)).map_err(|e| anyhow!("couldn't parse ntp servers: {e:?}"))?;
+            ensure!(
+                ((option_header.length % IP_ADDR_LEN) == 0) && option_header.length > 0,
+                "ntp servers should be a multiple of an addr length"
+            );
+            let (ntp_servers, remainder) = NtpServers::try_ref_from_prefix_with_elems(
+                suffix,
+                usize::from(option_header.length / IP_ADDR_LEN),
+            )
+            .map_err(|e| anyhow!("couldn't parse ntp servers: {e:?}"))?;
             (DhcpOption::NtpServers(ntp_servers), remainder)
         }
         DhcpOptionNumber::RequestedAddress => {
-            ensure!(option_header.length == IP_ADDR_LEN, "this is a one-address option");
-            let (requested_address, remainder) = RequestedAddress::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse a requested address: {e:?}"))?;
+            ensure!(
+                option_header.length == IP_ADDR_LEN,
+                "this is a one-address option"
+            );
+            let (requested_address, remainder) = RequestedAddress::try_ref_from_prefix(suffix)
+                .map_err(|e| anyhow!("couldn't parse a requested address: {e:?}"))?;
             (DhcpOption::RequestedAddress(requested_address), remainder)
-        },
+        }
         DhcpOptionNumber::DhcpMessageType => {
             ensure!(option_header.length == 1, "message type is a 1-byte option");
-            let (message_type, remainder) = DhcpOperation::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse operation: {e:?}"))?;
+            let (message_type, remainder) = DhcpOperation::try_ref_from_prefix(suffix)
+                .map_err(|e| anyhow!("couldn't parse operation: {e:?}"))?;
             (DhcpOption::Operation(message_type), remainder)
-        },
+        }
         DhcpOptionNumber::ParameterRequest => {
-            ensure!(option_header.length >= 1, "there should be at least one requested option");
-            let (parameters, remainder) = ParameterRequest::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length)).map_err(|e| anyhow!("couldn't parse parameters: {e:?}"))?;
+            ensure!(
+                option_header.length >= 1,
+                "there should be at least one requested option"
+            );
+            let (parameters, remainder) = ParameterRequest::try_ref_from_prefix_with_elems(
+                suffix,
+                usize::from(option_header.length),
+            )
+            .map_err(|e| anyhow!("couldn't parse parameters: {e:?}"))?;
             (DhcpOption::ParameterRequest(parameters), remainder)
-        },
+        }
         DhcpOptionNumber::RenewalTime => {
-            ensure!(usize::from(option_header.length) >= size_of::<RenewalTime>(), "there should be enough data for the option");
-            let (renewal_time, remainder) = RenewalTime::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse renewal time: {e:?}"))?;
+            ensure!(
+                usize::from(option_header.length) >= size_of::<RenewalTime>(),
+                "there should be enough data for the option"
+            );
+            let (renewal_time, remainder) = RenewalTime::try_ref_from_prefix(suffix)
+                .map_err(|e| anyhow!("couldn't parse renewal time: {e:?}"))?;
             (DhcpOption::RenewalTime(renewal_time), remainder)
-        },
+        }
         DhcpOptionNumber::RebindTime => {
-            ensure!(usize::from(option_header.length) >= size_of::<RebindTime>(), "there should be enough data for the rebind option");
-            let (rebind_time, remainder) = RebindTime::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse rebind time: {e:?}"))?;
+            ensure!(
+                usize::from(option_header.length) >= size_of::<RebindTime>(),
+                "there should be enough data for the rebind option"
+            );
+            let (rebind_time, remainder) = RebindTime::try_ref_from_prefix(suffix)
+                .map_err(|e| anyhow!("couldn't parse rebind time: {e:?}"))?;
             (DhcpOption::RebindTime(rebind_time), remainder)
-        },
+        }
         DhcpOptionNumber::IrcServers => {
-            ensure!((option_header.length % IP_ADDR_LEN) == 0 && option_header.length > 0, "irc servers should be a non-zero multiple of the addr length");
-            let (irc_servers, remainder) = IrcServers::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length / IP_ADDR_LEN)).map_err(|e| anyhow!("couldn't parse irc servers: {e:?}"))?;
+            ensure!(
+                (option_header.length % IP_ADDR_LEN) == 0 && option_header.length > 0,
+                "irc servers should be a non-zero multiple of the addr length"
+            );
+            let (irc_servers, remainder) = IrcServers::try_ref_from_prefix_with_elems(
+                suffix,
+                usize::from(option_header.length / IP_ADDR_LEN),
+            )
+            .map_err(|e| anyhow!("couldn't parse irc servers: {e:?}"))?;
             (DhcpOption::IrcServers(irc_servers), remainder)
         }
         _ => unimplemented!(":("),
@@ -221,13 +308,12 @@ pub fn parse_options<'message>(data: &'message [u8]) -> Result<Vec<DhcpOption<'m
     Ok(options)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use anyhow::{Result, bail};
     use std::assert_matches;
-    use anyhow::{bail, Result};
     use tracing::info;
 
     #[test]
@@ -238,7 +324,11 @@ mod tests {
         let DhcpOption::Subnet(subnet) = option_body else {
             bail!("expected a subnet element")
         };
-        assert_eq!(subnet.mask, [255, 255, 255, 0], "expecting a small local network");
+        assert_eq!(
+            subnet.mask,
+            [255, 255, 255, 0],
+            "expecting a small local network"
+        );
         Ok(())
     }
 
@@ -285,7 +375,7 @@ mod tests {
 
         Ok(())
     }
-    
+
     #[test]
     fn ensure_ntp_servers_parse() -> Result<()> {
         let one_server = &[42, 4, 192, 168, 0, 12][..];
@@ -293,29 +383,40 @@ mod tests {
         let DhcpOption::NtpServers(server) = one_server_option else {
             bail!("expected an NtpServers option instead of {one_server_option:?}")
         };
-        
+
         assert_eq!(server.servers.len(), 1, "one server");
-        assert_eq!(server.servers[0].address, [192, 168, 0, 12], "should be .12");
-        
+        assert_eq!(
+            server.servers[0].address,
+            [192, 168, 0, 12],
+            "should be .12"
+        );
+
         let two_servers = &[42, 8, 192, 168, 0, 12, 192, 168, 0, 24][..];
         let (two_servers_option, _) = take_dhcp_option(two_servers).expect("it's well-formed");
         let DhcpOption::NtpServers(servers) = two_servers_option else {
             bail!("expected an NtpServers option instead of {one_server_option:?}")
         };
-        
+
         assert_eq!(servers.servers.len(), 2, "one server");
-        assert_eq!(servers.servers[1].address, [192, 168, 0, 24], "should be .24");
-        
+        assert_eq!(
+            servers.servers[1].address,
+            [192, 168, 0, 24],
+            "should be .24"
+        );
+
         Ok(())
     }
 
     #[test]
     fn requested_address() -> Result<()> {
-        let addr_bytes: [u8; 4]  = [192, 168, 0, 13];
-        let last_lease = RequestedAddress{address: IPv4Address{ address: addr_bytes }};
+        let addr_bytes: [u8; 4] = [192, 168, 0, 13];
+        let last_lease = RequestedAddress {
+            address: IPv4Address {
+                address: addr_bytes,
+            },
+        };
 
         // I haven't really built the into-bytes side of all this, but I'm figuring it out.
-
 
         let req_addr_bytes = &[50, 4, 192, 168, 0, 13][..];
         let (requested_address, _) = take_dhcp_option(req_addr_bytes).expect("this is well-formed");
@@ -334,22 +435,36 @@ mod tests {
             bail!("expected an Operation element instead of {option_body:?}")
         };
 
-        assert_matches!(operation, DhcpOperation::Discover, "1 should parse as Discover");
+        assert_matches!(
+            operation,
+            DhcpOperation::Discover,
+            "1 should parse as Discover"
+        );
         Ok(())
     }
 
     #[test]
     fn test_parse_paramrequest() -> Result<()> {
         let option_bytes = &[55, 5, 3, 6, 15, 60, 74][..];
-        let (option_body, _) = take_dhcp_option(option_bytes).expect("this is a valid list of valid options");
+        let (option_body, _) =
+            take_dhcp_option(option_bytes).expect("this is a valid list of valid options");
         let DhcpOption::ParameterRequest(params) = option_body else {
             bail!("expected a parameter request instead of {option_body:?}")
         };
 
         assert_eq!(params.options.len(), 5, "five options were requested");
-        let options = [DhcpOptionNumber::Routers, DhcpOptionNumber::DnsServers, DhcpOptionNumber::DomainName, DhcpOptionNumber::VendorClass, DhcpOptionNumber::IrcServers];
+        let options = [
+            DhcpOptionNumber::Routers,
+            DhcpOptionNumber::DnsServers,
+            DhcpOptionNumber::DomainName,
+            DhcpOptionNumber::VendorClass,
+            DhcpOptionNumber::IrcServers,
+        ];
         for (parsed, expected) in params.options.iter().zip(options.iter()) {
-            assert_eq!(parsed, expected, "{parsed:?} should be the same as {expected:?}");
+            assert_eq!(
+                parsed, expected,
+                "{parsed:?} should be the same as {expected:?}"
+            );
         }
 
         Ok(())
@@ -357,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_parse_renewal_time() -> Result<()> {
-        let option_bytes = &[58, 4, 0, 0, 0xe, 0x10 ][..];
+        let option_bytes = &[58, 4, 0, 0, 0xe, 0x10][..];
         let (option_body, _) = take_dhcp_option(option_bytes).expect("this is well-formed");
         let DhcpOption::RenewalTime(renewal) = option_body else {
             bail!("expected renewal time instead of {option_body:?}")
@@ -375,7 +490,11 @@ mod tests {
             bail!("expected rebind time instead of {option_body:?}")
         };
 
-        assert_eq!(rebind.seconds, U32::from(3600 * 24 * 7), "it's been one week");
+        assert_eq!(
+            rebind.seconds,
+            U32::from(3600 * 24 * 7),
+            "it's been one week"
+        );
         Ok(())
     }
 
@@ -395,7 +514,8 @@ mod tests {
     #[test]
     fn unknown_option_handling() -> Result<()> {
         let option_bytes = &[251, 3, 1, 2, 3][..];
-        let (option_body, _) = take_dhcp_option(option_bytes).expect("it's well-formed but unknown");
+        let (option_body, _) =
+            take_dhcp_option(option_bytes).expect("it's well-formed but unknown");
         let DhcpOption::Unknown { number, data } = option_body else {
             bail!("expected an unknown option instead of {option_body:?}")
         };
