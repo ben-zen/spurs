@@ -7,6 +7,7 @@ use zerocopy_derive::*;
 
 use crate::dhcp::DhcpOperation;
 
+
 #[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(u8)]
 pub enum DhcpOptionNumber {
@@ -16,6 +17,7 @@ pub enum DhcpOptionNumber {
     DnsServers = 6,
     HostName = 12,
     DomainName = 15,
+    NtpServers = 42,
     RequestedAddress = 50,
     LeaseTime = 51,
     ExtendedOptions = 52, // 
@@ -72,6 +74,12 @@ pub struct DnsServers {
     servers: [IPv4Address]
 }
 
+#[derive(Debug, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
+#[repr(C)]
+pub struct NtpServers {
+    servers: [IPv4Address]
+}
+
 #[derive(Clone, Copy, Debug, Eq, Immutable, IntoBytes, KnownLayout, PartialEq, TryFromBytes, Unaligned)]
 #[repr(C)]
 pub struct RequestedAddress {
@@ -108,6 +116,7 @@ pub enum DhcpOption<'message> {
     Subnet(&'message SubnetMask),
     Routers(&'message Routers),
     DnsServers(&'message DnsServers),
+    NtpServers(&'message NtpServers),
     RequestedAddress(&'message RequestedAddress),
     Operation(&'message DhcpOperation),
     ParameterRequest(&'message ParameterRequest),
@@ -155,6 +164,11 @@ fn take_dhcp_option<'message>(data: &'message [u8]) -> Result<(DhcpOption<'messa
             let (dns_servers, remainder) = DnsServers::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length / IP_ADDR_LEN)).map_err(|e| anyhow!("couldn't parse dns servers: {e:?}"))?;
             (DhcpOption::DnsServers(dns_servers), remainder)
         },
+        DhcpOptionNumber::NtpServers => {
+            ensure!(((option_header.length % IP_ADDR_LEN) == 0) && option_header.length > 0, "ntp servers should be a multiple of an addr length");
+            let (ntp_servers, remainder) = NtpServers::try_ref_from_prefix_with_elems(suffix, usize::from(option_header.length / IP_ADDR_LEN)).map_err(|e| anyhow!("couldn't parse ntp servers: {e:?}"))?;
+            (DhcpOption::NtpServers(ntp_servers), remainder)
+        }
         DhcpOptionNumber::RequestedAddress => {
             ensure!(option_header.length == IP_ADDR_LEN, "this is a one-address option");
             let (requested_address, remainder) = RequestedAddress::try_ref_from_prefix(suffix).map_err(|e| anyhow!("couldn't parse a requested address: {e:?}"))?;
@@ -269,6 +283,29 @@ mod tests {
 
         assert_eq!(servers.servers.len(), 2, "two dns servers");
 
+        Ok(())
+    }
+    
+    #[test]
+    fn ensure_ntp_servers_parse() -> Result<()> {
+        let one_server = &[42, 4, 192, 168, 0, 12][..];
+        let (one_server_option, _) = take_dhcp_option(one_server).expect("it's well-formed");
+        let DhcpOption::NtpServers(server) = one_server_option else {
+            bail!("expected an NtpServers option instead of {one_server_option:?}")
+        };
+        
+        assert_eq!(server.servers.len(), 1, "one server");
+        assert_eq!(server.servers[0].address, [192, 168, 0, 12], "should be .12");
+        
+        let two_servers = &[42, 8, 192, 168, 0, 12, 192, 168, 0, 24][..];
+        let (two_servers_option, _) = take_dhcp_option(two_servers).expect("it's well-formed");
+        let DhcpOption::NtpServers(servers) = two_servers_option else {
+            bail!("expected an NtpServers option instead of {one_server_option:?}")
+        };
+        
+        assert_eq!(servers.servers.len(), 2, "one server");
+        assert_eq!(servers.servers[1].address, [192, 168, 0, 24], "should be .24");
+        
         Ok(())
     }
 
